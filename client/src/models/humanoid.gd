@@ -554,7 +554,7 @@ func _build_head() -> void:
 	mb.ellipsoid(skin, MeshBuilder.at_euler(Vector3(0, -hr * 0.1, -hr * 0.95), Vector3(-0.3, 0, 0)), Vector3(hr * 0.15, hr * 0.3, hr * 0.22) * (0.8 if female else 1.0), 8, 6)
 	mb.ellipsoid(skin, MeshBuilder.at(Vector3(0, -hr * 0.3, -hr * 1.0)), Vector3(hr * 0.17, hr * 0.12, hr * 0.13) * (0.8 if female else 1.0), 8, 5)
 	# Ohren
-	var elf_ears: bool = look.get("pointy_ears", false) or kind == "fairy"
+	var elf_ears: bool = look.get("pointy_ears", false) or kind == "fairy" or kind == "elf"
 	for sx in [-1.0, 1.0]:
 		if elf_ears:
 			mb.cylinder(skin, MeshBuilder.at_euler(Vector3(sx * hr * 0.85, 0.0, 0.0), Vector3(0, 0, sx * -1.2)), hr * 0.14, 0.0, hr * 0.7, 6)

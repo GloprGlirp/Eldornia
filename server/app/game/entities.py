@@ -94,8 +94,23 @@ class Aura:
         return self.stun or self.root or self.fear or self.poly or self.sleep or self.silence
 
     def client(self, t: float) -> list:
+        fl = 0
+        if self.stun or self.sleep or self.poly or self.fear:
+            fl |= 1
+        if self.root:
+            fl |= 2
+        if self.silence:
+            fl |= 4
+        if self.stealth:
+            fl |= 8
+        if self.slow:
+            fl |= 16
+        if self.immune:
+            fl |= 32
+        if self.form:
+            fl |= 64
         return [self.id, self.name, round(max(0.0, self.expires - t), 1), round(self.dur, 1), self.icon or "",
-                1 if self.debuff else 0, self.stacks, self.src]
+                1 if self.debuff else 0, self.stacks, self.src, fl, self.school or ""]
 
 
 # =============================================================================== Basis
