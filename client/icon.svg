@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128">
+<defs><radialGradient id="g" cx="50%" cy="40%" r="60%"><stop offset="0" stop-color="#3a5a9a"/><stop offset="1" stop-color="#101830"/></radialGradient>
+<linearGradient id="s" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ffe9a8"/><stop offset="1" stop-color="#b8862a"/></linearGradient></defs>
+<rect x="4" y="4" width="120" height="120" rx="22" fill="url(#g)" stroke="#c9a040" stroke-width="6"/>
+<path d="M64 14 L76 52 L64 104 L52 52 Z" fill="url(#s)" stroke="#5a3a10" stroke-width="3"/>
+<rect x="36" y="88" width="56" height="10" rx="4" fill="url(#s)" stroke="#5a3a10" stroke-width="3"/>
+<rect x="58" y="96" width="12" height="20" fill="#6a3a1a" stroke="#2a1a08" stroke-width="2"/>
+<circle cx="64" cy="118" r="6" fill="url(#s)" stroke="#5a3a10" stroke-width="2"/>
+<text x="64" y="76" font-family="serif" font-size="18" font-weight="bold" text-anchor="middle" fill="#2a1a08">E</text>
+</svg>
