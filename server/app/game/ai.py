@@ -164,7 +164,18 @@ class AIMixin:
         if step <= 0:
             return True
         nx, nz = u.x + dx / d * step, u.z + dz / d * step
-        nx, nz = zone.walkable_clamp(nx, nz)
+        if zone.nav:
+            nx, nz = zone.nav.clamp(nx, nz)
+        nx, nz = zone.try_move(u.x, u.z, nx, nz)
+        if (nx, nz) == (u.x, u.z):
+            # festgefahren: kurz seitlich ausweichen
+            stuck = getattr(u, "_stuck", 0) + 1
+            u._stuck = stuck
+            if stuck > 8:
+                u._stuck = 0
+                nx, nz = zone.walkable_clamp(u.x + random.uniform(-1.5, 1.5), u.z + random.uniform(-1.5, 1.5))
+        else:
+            u._stuck = 0
         u.set_pos(nx, zone.height(nx, nz), nz, math.atan2(-dx, -dz))
         return False
 

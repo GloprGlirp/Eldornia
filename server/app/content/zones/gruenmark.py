@@ -8,6 +8,8 @@ Koordinaten: x = Osten, z = Süden (Meter). Blickrichtung r: 0 = Norden (-z), pi
 """
 import math
 
+from .. import items as I
+
 N, S, E, W = 0.0, math.pi, -math.pi / 2, math.pi / 2
 NE, NW, SE, SW = -math.pi / 4, math.pi / 4, -3 * math.pi / 4, 3 * math.pi / 4
 
@@ -205,6 +207,24 @@ ZONE = {
         {"t": "lantern", "x": 168, "z": 150},
     ],
 }
+
+# ============================================================================== Besondere Gegenstände
+I.W("einohrs_langbogen", "Einohrs Langbogen", 3, "bogen", 7, (12, 23), 2.9, {"agi": 5, "sta": 2},
+    desc="Er hat damit nie ein Ohr verfehlt. Außer seinem eigenen.", vis=I.V(w="#5a3a22", a="#8a7a5a"))
+I.AR("einohrs_kapuze", "Einohrs Wildererkapuze", 3, "head", "leder", 7, {"agi": 5, "sta": 3}, vis=I.V(c="#3a4a2a"))
+I.AR("goldbarts_krone", "Goldbarts Kerzenkrone", 3, "head", "stoff", 8, {"int": 5, "spi": 4, "sta": 2},
+     desc="Ein Kerzenhalter mit Ambitionen.", vis=I.V(c="#c8a040", a="#ffe080", gold=True))
+I.AR("g_umhang_ruf_krone", "Umhang der Kronentreue", 3, "back", "umhang", 10, {"sta": 5, "str": 3, "agi": 3},
+     desc="Nur für Freunde der Krone.", req_rep=("krone", "Wohlwollend"), buy=4500, vis=I.V(c="#8f1d2c", a="#e0b648"))
+I.AR("borke_umhang", "Umhang der Uralten Borke", 4, "back", "umhang", 11, {"sta": 7, "spi": 5, "nature_res": 10},
+     bind="bop", vis=I.V(c="#5a4430", g="#d0ff60"))
+I.W("eichenherz_stab", "Eichenherzstab", 4, "stab", 11, (24, 40), 3.0, {"int": 9, "spi": 7, "sp": 9, "sta": 4},
+    bind="bop", vis=I.V(w="#5a4430", g="#d0ff60"))
+I.AR("ring_der_wurzeln", "Ring der Wurzeln", 4, "ring", "schmuck", 11, {"sta": 6, "str": 4, "agi": 4}, bind="bop")
+I.AR("wurzelschild", "Wurzelschild", 4, "off_hand", "schild", 11, {"sta": 7, "str": 3, "block": 1.0}, bind="bop",
+     vis=I.V(c="#5a4430", m="#6ab040"))
+I.AR("rindenpanzer", "Rindenpanzer", 4, "chest", "leder", 11, {"agi": 8, "sta": 8, "str": 3}, bind="bop",
+     vis=I.V(c="#5a4430", a="#6ab040", g="#d0ff60"))
 
 # ============================================================================== NPCs
 NPCS = {

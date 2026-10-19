@@ -13,3 +13,4 @@ desktop/dist/
 *.translation
 export/
 build/
+server/eldornia.db
