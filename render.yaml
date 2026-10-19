@@ -1,0 +1,21 @@
+services:
+  - type: web
+    name: eldornia
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt && python tools/fetch_web_build.py
+    startCommand: cd server && uvicorn app.main:app --host 0.0.0.0 --port $PORT --ws-ping-interval 30 --ws-ping-timeout 180
+    healthCheckPath: /api/status
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.6
+      - key: SECRET_KEY
+        generateValue: true
+      - key: DATABASE_URL
+        fromDatabase:
+          name: eldornia-db
+          property: connectionString
+
+databases:
+  - name: eldornia-db
+    plan: free

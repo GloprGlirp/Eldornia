@@ -95,7 +95,7 @@ func _ready() -> void:
 	var ob := OptionButton.new()
 	for s in STYLES:
 		ob.add_item(s[1])
-	ob.item_selected.connect(func(i): _set("hair_style", STYLES[i][0]))
+	ob.item_selected.connect(func(i): _set_look("hair_style", STYLES[i][0]))
 	rv.add_child(ob)
 	rv.add_child(UiSkin.label("Haarfarbe", 15, UiSkin.TEXT_DIM))
 	rv.add_child(_swatches(HAIRS, "hair"))
@@ -139,7 +139,7 @@ func _options(opts: Array, key: String) -> HBoxContainer:
 		b.button_group = group
 		b.button_pressed = str(look.get(key, "")) == o[0]
 		b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		b.pressed.connect(func(): _set(key, o[0]))
+		b.pressed.connect(func(): _set_look(key, o[0]))
 		h.add_child(b)
 	return h
 
@@ -156,12 +156,12 @@ func _swatches(cols: Array, key: String) -> HFlowContainer:
 		var sbh := UiSkin.flat(Color.html(c).lightened(0.2), Color.WHITE, 2, 4)
 		b.add_theme_stylebox_override("hover", sbh)
 		b.add_theme_stylebox_override("pressed", sbh)
-		b.pressed.connect(func(): _set(key, c))
+		b.pressed.connect(func(): _set_look(key, c))
 		h.add_child(b)
 	return h
 
 
-func _set(key: String, v) -> void:
+func _set_look(key: String, v) -> void:
 	look[key] = v
 	if key == "hair" and str(look.get("beard", "")) != "":
 		look["beard"] = v

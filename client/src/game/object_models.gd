@@ -152,7 +152,7 @@ static func _build(model: String, obj: String, sub: String) -> ArrayMesh:
 		mb.cylinder(glass, MeshBuilder.at(Vector3(0.5, 0.9, -0.15)), 0.06, 0.06, 0.22, 8)
 	elif model.begins_with("trap_"):
 		var metal := Mat.stylized(Color.html("#8a8e96"), Mat.P.METAL)
-		var c := {"trap_frost": "#8ad8ff", "trap_fire": "#ff7a20", "trap_nature": "#7ad04a"}.get(model, "#8ad8ff")
+		var c = {"trap_frost": "#8ad8ff", "trap_fire": "#ff7a20", "trap_nature": "#7ad04a"}.get(model, "#8ad8ff")
 		var glow := Mat.emissive(Color.html(c), 2.0)
 		mb.torus(metal, MeshBuilder.at(Vector3(0, 0.05, 0)), 0.45, 0.05, 16, 6)
 		for i in 8:
@@ -168,7 +168,7 @@ static func _build(model: String, obj: String, sub: String) -> ArrayMesh:
 ## Bodeneffekt (Feuer, Lava, Gift, Schattenfeuer, Seuchenwolke): Scheibe + Partikel
 static func ground_effect(fx: String, radius: float) -> Node3D:
 	var root := Node3D.new()
-	var col := {"fire": Color("#ff6a1a"), "lava": Color("#ff4a0a"), "poison": Color("#7ad04a"), "shadowfire": Color("#9a5ad0"),
+	var col = {"fire": Color("#ff6a1a"), "lava": Color("#ff4a0a"), "poison": Color("#7ad04a"), "shadowfire": Color("#9a5ad0"),
 		"plague": Color("#9ad04a"), "frost": Color("#8ad8ff"), "holy": Color("#ffe080")}.get(fx, Color("#ff6a1a"))
 	var mi := MeshInstance3D.new()
 	var mesh := PlaneMesh.new()

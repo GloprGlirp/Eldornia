@@ -188,7 +188,7 @@ func _render_icon(name: String, bg: Color, size: int, fg: Color) -> Image:
 			var t := clampf(0.15 + v * 0.75 - u * 0.2, 0.0, 1.0)
 			var c := hl.lerp(dk, t)
 			for b in blobs:
-				var d := Vector2(x - b[0], y - b[1]).length() / b[2]
+				var d = Vector2(x - b[0], y - b[1]).length() / b[2]
 				if d < 1.0:
 					c = c.lightened(b[3] * (1.0 - d)) if b[3] > 0 else c.darkened(-b[3] * (1.0 - d))
 			var r := Vector2(u - 0.5, v - 0.5).length()

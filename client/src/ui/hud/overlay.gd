@@ -128,7 +128,7 @@ func _draw() -> void:
 					if e.cast != null:
 						var c: Dictionary = e.cast
 						var total := maxf(0.05, float(c.get("dur", 1.0)))
-						var left := float(c.get("left", 0.0)) - (now - e.cast_start)
+						var left = float(c.get("left", 0.0)) - (now - e.cast_start)
 						var cf := clampf(1.0 - left / total, 0.0, 1.0)
 						if c.get("ch", false):
 							cf = 1.0 - cf
@@ -219,7 +219,7 @@ func _draw() -> void:
 		if t["crit"] and k < 0.15:
 			fsz = int(fsz * (1.0 + (0.15 - k) * 4.0))
 		var a := 1.0 if k < 0.65 else 1.0 - (k - 0.65) / 0.35
-		var pos := sp3 + t["off"] + Vector2(0, -rise - 20)
+		var pos = sp3 + t["off"] + Vector2(0, -rise - 20)
 		var tw := f.get_string_size(t["text"], HORIZONTAL_ALIGNMENT_LEFT, -1, fsz).x
 		draw_string_outline(f, pos - Vector2(tw * 0.5, 0), t["text"], HORIZONTAL_ALIGNMENT_LEFT, -1, fsz, 5, Color(0, 0, 0, a))
 		draw_string(f, pos - Vector2(tw * 0.5, 0), t["text"], HORIZONTAL_ALIGNMENT_LEFT, -1, fsz, Color(t["color"], a))

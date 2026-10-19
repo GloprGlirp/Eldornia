@@ -421,7 +421,7 @@ func _process(delta: float) -> void:
 			n.queue_free()
 			_timed.remove_at(i)
 		elif left < e[2] and e[2] > 0.0:
-			var a := left / e[2]
+			var a = left / e[2]
 			if n is Decal:
 				n.modulate.a = minf(n.modulate.a, a)
 			elif n is MeshInstance3D and n.material_override is StandardMaterial3D:

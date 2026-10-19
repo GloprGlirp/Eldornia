@@ -245,15 +245,15 @@ static func tex(key: String) -> ImageTexture:
 						img.set_pixel(x, y, img.get_pixel(x, y).darkened(0.35 * (1.0 - d / 14.0)))
 		"button0", "button1", "button2", "button3":
 			var s := int(key.substr(6))
-			var top := [Color("#9a2a1a"), Color("#c03a22"), Color("#5a160c"), Color("#4a3a32")][s]
-			var bot := [Color("#3a0c06"), Color("#5a1408"), Color("#2a0804"), Color("#2a2420")][s]
+			var top = [Color("#9a2a1a"), Color("#c03a22"), Color("#5a160c"), Color("#4a3a32")][s]
+			var bot = [Color("#3a0c06"), Color("#5a1408"), Color("#2a0804"), Color("#2a2420")][s]
 			img = Image.create(48, 28, false, Image.FORMAT_RGBA8)
 			var nz := FastNoiseLite.new()
 			nz.seed = 5
 			nz.frequency = 0.2
 			for y in 28:
 				for x in 48:
-					var c := top.lerp(bot, float(y) / 27.0)
+					var c = top.lerp(bot, float(y) / 27.0)
 					c = c.lightened(nz.get_noise_2d(x, y) * 0.06)
 					if y < 12:
 						c = c.lightened(0.08 * (1.0 - y / 12.0))

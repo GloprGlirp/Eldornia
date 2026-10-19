@@ -115,7 +115,9 @@ func _build_zone(data: Dictionary) -> void:
 	zone_root.name = "Zone"
 	add_child(zone_root)
 	builder = ZoneBuilder.new()
+	var t0 := Time.get_ticks_msec()
 	builder.build(zone_root, data)
+	print("Zone %s gebaut in %d ms" % [str(data.get("id", "")), Time.get_ticks_msec() - t0])
 	hf = builder.hf
 	water = data.get("water", [])
 	grid_n = int(data.get("grid_n", 0))

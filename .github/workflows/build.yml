@@ -1,0 +1,107 @@
+name: Build & Release
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+env:
+  GODOT_VERSION: "4.7.2"
+
+jobs:
+  server-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r requirements-dev.txt
+      - name: Tests
+        working-directory: server
+        run: python -m pytest -q
+
+  export:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Godot + Exportvorlagen laden
+        run: |
+          base=https://github.com/godotengine/godot-builds/releases/download/${GODOT_VERSION}-stable
+          curl -sSL -o godot.zip $base/Godot_v${GODOT_VERSION}-stable_linux.x86_64.zip
+          curl -sSL -o templates.tpz $base/Godot_v${GODOT_VERSION}-stable_export_templates.tpz
+          unzip -q godot.zip && mv Godot_v${GODOT_VERSION}-stable_linux.x86_64 godot
+          mkdir -p ~/.local/share/godot/export_templates/${GODOT_VERSION}.stable
+          unzip -q templates.tpz && mv templates/* ~/.local/share/godot/export_templates/${GODOT_VERSION}.stable/
+      - name: Projekt importieren und prüfen
+        run: |
+          ./godot --headless --path client --import || true
+          ./godot --headless --path client -- --check
+      - name: Exportieren
+        run: |
+          mkdir -p build/windows build/linux build/macos client/export/web
+          ./godot --headless --path client --export-release "Windows Desktop" ../build/windows/Eldornia.exe
+          ./godot --headless --path client --export-release "Linux" ../build/linux/Eldornia.x86_64
+          ./godot --headless --path client --export-release "macOS" ../build/macos/Eldornia.zip
+          ./godot --headless --path client --export-release "Web" export/web/index.html
+          (cd client/export/web && zip -qr ../../../build/eldornia-web.zip .)
+          (cd build/linux && tar czf ../Eldornia-linux.tar.gz .)
+          cp build/macos/Eldornia.zip build/Eldornia-macos.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows
+          path: build/windows
+      - uses: actions/upload-artifact@v4
+        with:
+          name: packages
+          path: |
+            build/eldornia-web.zip
+            build/Eldornia-linux.tar.gz
+            build/Eldornia-macos.zip
+
+  installer:
+    needs: export
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: windows
+          path: build/windows
+      - name: Inno Setup installieren
+        run: choco install innosetup -y --no-progress
+      - name: EldorniaSetup.exe bauen
+        shell: pwsh
+        run: |
+          $v = "0.3.0"
+          if ("${{ github.ref }}" -like "refs/tags/v*") { $v = "${{ github.ref_name }}".TrimStart("v") }
+          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" "/DAppVersion=$v" installer\eldornia.iss
+      - uses: actions/upload-artifact@v4
+        with:
+          name: installer
+          path: build/installer/EldorniaSetup.exe
+
+  release:
+    needs: [server-tests, export, installer]
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+      - name: Release veröffentlichen
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || 'latest' }}
+          name: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || 'Eldornia (aktueller Stand)' }}
+          prerelease: ${{ !startsWith(github.ref, 'refs/tags/') }}
+          make_latest: true
+          files: |
+            dist/installer/EldorniaSetup.exe
+            dist/packages/eldornia-web.zip
+            dist/packages/Eldornia-linux.tar.gz
+            dist/packages/Eldornia-macos.zip

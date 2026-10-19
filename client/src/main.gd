@@ -1,7 +1,8 @@
 extends Node
 ## Einstiegspunkt: Anmeldung → Charakterwahl → Charaktererstellung → Spielwelt.
 
-var ui: CanvasLayer
+var ui_layer: CanvasLayer
+var ui: Control
 var menu: MenuScene
 var screen: Control
 var world: Node3D
@@ -23,9 +24,15 @@ func _ready() -> void:
 	UiSkin.init()
 	get_tree().root.theme = UiSkin.theme
 	get_tree().set_auto_accept_quit(false)
-	ui = CanvasLayer.new()
-	ui.layer = 10
-	add_child(ui)
+	ui_layer = CanvasLayer.new()
+	ui_layer.layer = 10
+	add_child(ui_layer)
+	ui = Control.new()
+	ui.name = "UI"
+	ui.theme = UiSkin.theme
+	ui.set_anchors_preset(Control.PRESET_FULL_RECT)
+	ui.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	ui_layer.add_child(ui)
 	Net.disconnected.connect(_on_disconnected)
 	Game.msg.connect(_on_game_msg)
 	for a in args:
@@ -33,6 +40,9 @@ func _ready() -> void:
 			Settings.server = a.substr(9)
 	show_login()
 	Sfx.play_music("menu")
+	for a in args:
+		if a.begins_with("--auto="):
+			add_child(load("res://src/dev/auto_play.gd").new(self))
 
 
 func _notification(what: int) -> void:

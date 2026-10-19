@@ -88,7 +88,7 @@ func refresh() -> void:
 func _process(_d: float) -> void:
 	var me = world.me if world else null
 	var tgt = world.ent(world.target) if world else null
-	var power := me.pw if me else 0
+	var power = me.pw if me else 0
 	for s in slots:
 		var p: Dictionary = s.payload
 		if p.has("ab"):

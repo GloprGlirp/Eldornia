@@ -106,7 +106,7 @@ func _process(_d: float) -> void:
 	if e.kind == "player":
 		col = Content.class_color(str(e.info.get("cls", Game.me_cls if e.is_me else ""))) if not e.is_enemy() else col
 	name_l.add_theme_color_override("font_color", col.lightened(0.15))
-	var lvl := e.level if not e.is_me else Game.level
+	var lvl = e.level if not e.is_me else Game.level
 	level_l.text = "☠" if e.look.get("boss", false) else str(lvl)
 	level_l.add_theme_color_override("font_color", HudOverlay._level_color(lvl))
 	var hp: int = e.hp
@@ -138,7 +138,7 @@ func _process(_d: float) -> void:
 		if e.cast != null:
 			var c: Dictionary = e.cast
 			var total := maxf(0.05, float(c.get("dur", 1.0)))
-			var left := float(c.get("left", 0.0)) - (Game.now() - e.cast_start)
+			var left = float(c.get("left", 0.0)) - (Game.now() - e.cast_start)
 			var f := clampf(1.0 - left / total, 0.0, 1.0)
 			if c.get("ch", false):
 				f = 1.0 - f
@@ -168,7 +168,7 @@ func _portrait_for(e) -> Texture2D:
 		var c := Content.cls(str(e.info.get("cls", Game.me_cls if e.is_me else "")))
 		return Content.icon(str(c.get("icon", "person")), Content.class_color(str(e.info.get("cls", Game.me_cls))).darkened(0.55), 64)
 	var m := str(e.info.get("model", ""))
-	var icon := {"wolf": "wolf-head", "boar": "boar", "bear": "bear-head", "spider": "spider-alt", "dragon": "dragon-head",
+	var icon = {"wolf": "wolf-head", "boar": "boar", "bear": "bear-head", "spider": "spider-alt", "dragon": "dragon-head",
 		"drake": "dragon-head", "golem": "golem-head", "treant": "oak", "ghost": "ghost", "chicken": "chicken", "rabbit": "rabbit",
 		"fox": "fox-head", "dummy": "scarecrow"}.get(m, "")
 	if icon == "":

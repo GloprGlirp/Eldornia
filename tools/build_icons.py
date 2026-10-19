@@ -40,6 +40,16 @@ names |= {"backpack", "scroll-unfurled", "spell-book", "skills", "treasure-map",
           "battle-gear", "barbute", "pointy-hat", "rune-stone", "party-popper", "laurels", "world", "compass",
           "sun", "moon", "fire", "frozen-orb", "earth-crack", "vortex", "angel-wings", "meat", "water-flask", "sleepy",
           "cloak-dagger", "bear-head", "enrage", "rock", "skull", "drop", "lightning-arc", "sprint", "jump-across"}
+# alle Symbolnamen, die im Client-Quelltext als Zeichenkette vorkommen
+for f in (ROOT / "client" / "src").rglob("*.gd"):
+    for lit in re.findall(r'"([a-z0-9]+(?:-[a-z0-9]+)*)"', f.read_text(encoding="utf-8")):
+        if lit in icons:
+            names.add(lit)
+# Zonen-/Mob-/NPC-Symbole aus den Inhalten
+for coll in (getattr(W, "MOBS", {}), getattr(W, "NPCS", {})):
+    for v in coll.values():
+        if isinstance(v, dict) and isinstance(v.get("icon"), str):
+            names.add(v["icon"])
 ALIAS = {"badge": "police-badge", "bolt": "bolt-spell-cast", "crypt": "crypt-entrance", "drain": "marrow-drain",
          "gathering": "flower-pot", "last-stand": "standing-potion", "monocle": "spectacles", "pelt": "fur-shirt",
          "resurrected": "angel-outfit", "seal": "wax-seal", "skull": "death-skull", "thistle": "thorny-vine",

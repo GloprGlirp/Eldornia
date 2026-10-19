@@ -9,14 +9,14 @@ const DEFAULT_SERVER := "https://eldornia.onrender.com"
 ## Standard-Tastenbelegung (GDD 4: WASD, Maus, 1–6, Leertaste, E, I, M, J, G – konfigurierbar)
 const DEFAULT_KEYS := {
 	"vor": [KEY_W, KEY_UP], "zurueck": [KEY_S, KEY_DOWN], "links": [KEY_A], "rechts": [KEY_D],
-	"links_seit": [KEY_Q], "rechts_seit": [KEY_E], "springen": [KEY_SPACE], "laufen_auto": [KEY_NUMLOCK],
-	"sprinten": [KEY_SHIFT], "interagieren": [KEY_F], "ziel_naechstes": [KEY_TAB], "ziel_selbst": [KEY_F1],
+	"links_seit": [KEY_Q], "rechts_seit": [KEY_R], "springen": [KEY_SPACE], "laufen_auto": [KEY_NUMLOCK],
+	"sprinten": [KEY_SHIFT], "interagieren": [KEY_E, KEY_F], "ziel_naechstes": [KEY_TAB], "ziel_selbst": [KEY_F1],
 	"ziel_freund": [KEY_F2], "ziel_loeschen": [KEY_ESCAPE],
 	"aktion_1": [KEY_1], "aktion_2": [KEY_2], "aktion_3": [KEY_3], "aktion_4": [KEY_4], "aktion_5": [KEY_5],
 	"aktion_6": [KEY_6], "aktion_7": [KEY_7], "aktion_8": [KEY_8], "aktion_9": [KEY_9], "aktion_10": [KEY_0],
 	"aktion_11": [KEY_MINUS, 223], "aktion_12": [KEY_EQUAL, 180],
-	"leiste2_1": [KEY_Z], "leiste2_2": [KEY_X], "leiste2_3": [KEY_C], "leiste2_4": [KEY_V], "leiste2_5": [KEY_R],
-	"leiste2_6": [KEY_T],
+	"leiste2_1": [KEY_Z], "leiste2_2": [KEY_X], "leiste2_3": [KEY_C], "leiste2_4": [KEY_V], "leiste2_5": [KEY_T],
+	"leiste2_6": [KEY_CAPSLOCK],
 	"inventar": [KEY_I, KEY_B], "charakter": [KEY_K], "zauberbuch": [KEY_P], "talente": [KEY_N], "questlog": [KEY_J, KEY_L],
 	"karte": [KEY_M], "gilde": [KEY_G], "berufe": [KEY_U], "erfolge": [KEY_Y], "sammlung": [KEY_H],
 	"gruppensuche": [KEY_O], "soziales": [KEY_SEMICOLON], "reiten": [KEY_APOSTROPHE], "chat": [KEY_ENTER],
