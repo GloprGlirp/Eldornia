@@ -1,106 +1,85 @@
-"""Gelände, Hindernisse und Wegfindung.
+"""Gelände, Vegetation, Hindernisse und Wegfindung.
 
-Die Höhenkarte der Grünmark wird beim Serverstart deterministisch erzeugt und an den Client
-übertragen (eine Quelle der Wahrheit für Server und Client).
+Die Höhenkarten aller Außenzonen werden beim Serverstart deterministisch erzeugt (numpy) und an den
+Client übertragen – eine Quelle der Wahrheit für Server und Client. Die Dreiecksaufteilung der
+Interpolation ist mit dem Godot-Client identisch.
 """
 from __future__ import annotations
 
 import base64
 import math
 import random
-import struct
 from functools import lru_cache
 
-from .content import world as W
+import numpy as np
 
 
-# ----------------------------------------------------------------------------- Rauschen
-def _hash(ix: int, iz: int, seed: int) -> float:
-    h = (ix * 374761393 + iz * 668265263 + seed * 2147483647) & 0xFFFFFFFF
+# ----------------------------------------------------------------------------- Rauschen (numpy)
+def _hash(ix, iz, seed: int):
+    h = (ix.astype(np.int64) * 374761393 + iz.astype(np.int64) * 668265263 + seed * 2147483647) & 0xFFFFFFFF
     h = ((h ^ (h >> 13)) * 1274126177) & 0xFFFFFFFF
     h = h ^ (h >> 16)
-    return (h & 0xFFFF) / 65535.0
+    return (h & 0xFFFF).astype(np.float64) / 65535.0
 
 
-def _smooth(t: float) -> float:
-    return t * t * (3 - 2 * t)
-
-
-def value_noise(x: float, z: float, seed: int = 0) -> float:
-    ix, iz = math.floor(x), math.floor(z)
-    fx, fz = x - ix, z - iz
+def value_noise(x, z, seed: int = 0):
+    ix = np.floor(x)
+    iz = np.floor(z)
+    fx = x - ix
+    fz = z - iz
+    ix = ix.astype(np.int64)
+    iz = iz.astype(np.int64)
     a = _hash(ix, iz, seed)
     b = _hash(ix + 1, iz, seed)
     c = _hash(ix, iz + 1, seed)
     d = _hash(ix + 1, iz + 1, seed)
-    u, v = _smooth(fx), _smooth(fz)
-    return (a + (b - a) * u) + ((c + (d - c) * u) - (a + (b - a) * u)) * v  # 0..1
+    u = fx * fx * (3 - 2 * fx)
+    v = fz * fz * (3 - 2 * fz)
+    return (a + (b - a) * u) + ((c + (d - c) * u) - (a + (b - a) * u)) * v
 
 
-def fbm(x: float, z: float, octaves: int = 4, seed: int = 0) -> float:
-    total, amp, freq, norm = 0.0, 1.0, 1.0, 0.0
+def fbm(x, z, octaves: int = 4, seed: int = 0):
+    total = np.zeros_like(x, dtype=np.float64)
+    amp, freq, norm = 1.0, 1.0, 0.0
     for o in range(octaves):
         total += (value_noise(x * freq, z * freq, seed + o * 31) * 2 - 1) * amp
         norm += amp
         amp *= 0.5
         freq *= 2.0
-    return total / norm  # -1..1
+    return total / norm
 
 
-def smoothstep(e0: float, e1: float, x: float) -> float:
-    if e1 == e0:
-        return 0.0 if x < e0 else 1.0
-    t = max(0.0, min(1.0, (x - e0) / (e1 - e0)))
+def smoothstep(e0, e1, x):
+    t = np.clip((x - e0) / (e1 - e0 + 1e-9), 0.0, 1.0)
     return t * t * (3 - 2 * t)
 
 
+def _seg_dist_grid(X, Z, ax, az, bx, bz):
+    dx, dz = bx - ax, bz - az
+    l2 = dx * dx + dz * dz
+    if l2 == 0:
+        return np.hypot(X - ax, Z - az)
+    t = np.clip(((X - ax) * dx + (Z - az) * dz) / l2, 0.0, 1.0)
+    return np.hypot(X - (ax + t * dx), Z - (az + t * dz))
+
+
+def _polyline_dist(X, Z, pts):
+    best = np.full(X.shape, 1e9)
+    for k in range(len(pts) - 1):
+        best = np.minimum(best, _seg_dist_grid(X, Z, pts[k][0], pts[k][1], pts[k + 1][0], pts[k + 1][1]))
+    return best
+
+
 # ----------------------------------------------------------------------------- Höhenkarte
-def _natural_height(x: float, z: float) -> float:
-    h = fbm(x * 0.011, z * 0.011, 4, 7) * 6.5
-    h += fbm(x * 0.045, z * 0.045, 2, 99) * 0.9
-    for hill in W.HILLS:
-        d2 = (x - hill["x"]) ** 2 + (z - hill["z"]) ** 2
-        h += hill["h"] * math.exp(-d2 / (2 * hill["s"] ** 2))
-    # Gebirge am Rand (abgerundetes Quadrat)
-    d = (abs(x) ** 4 + abs(z) ** 4) ** 0.25
-    edge = 178.0
-    if d > edge:
-        t = min(1.25, (d - edge) / (240.0 - edge))
-        h += (t ** 1.6) * 48.0 * (0.75 + 0.5 * value_noise(x * 0.03, z * 0.03, 5))
-    return h
-
-
-@lru_cache(maxsize=None)
-def _flatten_target(idx: int) -> float:
-    f = W.FLATTEN[idx]
-    return f["h"] if f["h"] is not None else _natural_height(f["x"], f["z"])
-
-
-def _height(x: float, z: float) -> float:
-    h = _natural_height(x, z)
-    for idx, f in enumerate(W.FLATTEN):
-        d = math.hypot(x - f["x"], z - f["z"])
-        if d >= f["r"] + f["falloff"]:
-            continue
-        target = _flatten_target(idx)
-        w = 1.0 - smoothstep(f["r"], f["r"] + f["falloff"], d)
-        h = h + (target - h) * w
-    return h
-
-
 class Heightmap:
-    def __init__(self, size: float, step: float):
+    def __init__(self, size: float, step: float, data: np.ndarray, void: float | None = None):
         self.size = size
         self.step = step
         self.half = size / 2
-        self.n = int(size / step) + 1
-        self.data = [0.0] * (self.n * self.n)
-        for j in range(self.n):
-            z = -self.half + j * step
-            row = j * self.n
-            for i in range(self.n):
-                x = -self.half + i * step
-                self.data[row + i] = _height(x, z)
+        self.n = data.shape[0]
+        self.arr = data.astype(np.float32)
+        self.data = self.arr.ravel().tolist()
+        self.void = void
 
     def height(self, x: float, z: float) -> float:
         fx = (x + self.half) / self.step
@@ -115,21 +94,89 @@ class Heightmap:
         b = d[j * n + i + 1]
         c = d[(j + 1) * n + i]
         e = d[(j + 1) * n + i + 1]
-        # gleiche Dreiecksaufteilung wie im Client (PlaneGeometry)
         if tx + tz <= 1:
             return a + (b - a) * tx + (c - a) * tz
         return e + (c - e) * (1 - tx) + (b - e) * (1 - tz)
 
+    def is_void(self, x: float, z: float) -> bool:
+        return self.void is not None and self.height(x, z) <= self.void + 1.0
+
+    def slope(self, x: float, z: float) -> float:
+        d = self.step
+        hx = self.height(x + d, z) - self.height(x - d, z)
+        hz = self.height(x, z + d) - self.height(x, z - d)
+        return math.hypot(hx, hz) / (2 * d)
+
     def encoded(self) -> str:
-        """Höhen in Zentimetern als Int16, base64-kodiert."""
-        packed = struct.pack(f"<{len(self.data)}h", *(max(-32000, min(32000, int(round(h * 100)))) for h in self.data))
+        packed = np.clip(np.round(self.arr * 100), -32000, 32000).astype("<i2").tobytes()
         return base64.b64encode(packed).decode()
 
 
-@lru_cache(maxsize=None)
-def gruenmark_heightmap() -> Heightmap:
-    z = W.ZONES["gruenmark"]
-    return Heightmap(z["size"], z["step"])
+def build_heightmap(zone: dict) -> Heightmap:
+    cfg = zone["terrain"]
+    size = zone["size"]
+    step = zone.get("step", 2)
+    n = int(size / step) + 1
+    half = size / 2
+    coords = -half + np.arange(n) * step
+    X, Z = np.meshgrid(coords, coords)   # Z: Zeilen (j), X: Spalten (i)
+    seed = cfg.get("seed", 7)
+    freq = cfg.get("freq", 0.011)
+    h = fbm(X * freq, Z * freq, 4, seed) * cfg.get("base", 6.5)
+    h += fbm(X * cfg.get("detail_freq", 0.045), Z * cfg.get("detail_freq", 0.045), 2, seed + 92) * cfg.get("detail", 0.9)
+    if cfg.get("ridged"):
+        r = 1.0 - np.abs(fbm(X * cfg["ridged"]["freq"], Z * cfg["ridged"]["freq"], 4, seed + 17))
+        h += (r ** 2) * cfg["ridged"]["amp"]
+    for hill in cfg.get("hills", []):
+        d2 = (X - hill["x"]) ** 2 + (Z - hill["z"]) ** 2
+        h += hill["h"] * np.exp(-d2 / (2 * hill["s"] ** 2))
+    for cr in cfg.get("craters", []):
+        d = np.hypot(X - cr["x"], Z - cr["z"])
+        rim = np.exp(-((d - cr["r"]) ** 2) / (2 * (cr["r"] * 0.25) ** 2)) * cr.get("rim", 4)
+        bowl = -(1 - smoothstep(0, cr["r"], d)) * cr["depth"]
+        h += rim + bowl
+    for rg in cfg.get("ridges", []):
+        d = _polyline_dist(X, Z, rg["pts"])
+        h += np.exp(-(d ** 2) / (2 * rg["w"] ** 2)) * rg["h"] * (0.75 + 0.5 * value_noise(X * 0.03, Z * 0.03, seed + 3))
+    for v in cfg.get("valleys", []):
+        d = _polyline_dist(X, Z, v["pts"])
+        w = v["w"]
+        target = v.get("level", None)
+        carve = 1 - smoothstep(w * 0.5, w * 0.5 + v.get("falloff", 10), d)
+        if target is None:
+            h -= carve * v.get("depth", 4)
+        else:
+            h = h + (target - h) * carve
+    edge = cfg.get("edge")
+    if edge:
+        dd = (np.abs(X) ** 4 + np.abs(Z) ** 4) ** 0.25
+        t = np.clip((dd - edge["start"]) / (edge["end"] - edge["start"]), 0.0, 1.25)
+        h += (t ** 1.6) * edge["height"] * (0.75 + 0.5 * value_noise(X * 0.03, Z * 0.03, 5))
+    # Einebnungen (Dörfer, Burghügel, Lager)
+    for f in cfg.get("flatten", []):
+        d = np.hypot(X - f["x"], Z - f["z"])
+        target = f["h"]
+        if target is None:
+            i = int(round((f["x"] + half) / step))
+            j = int(round((f["z"] + half) / step))
+            target = float(h[min(n - 1, max(0, j)), min(n - 1, max(0, i))])
+            f["h_resolved"] = target
+        w = 1.0 - smoothstep(f["r"], f["r"] + f["falloff"], d)
+        h = h + (target - h) * w
+    void = None
+    if cfg.get("islands") is not None:
+        void = cfg.get("void", -60.0)
+        mask = np.zeros_like(h)
+        base = np.full_like(h, -1e9)
+        for isl in cfg["islands"]:
+            d = np.hypot(X - isl["x"], Z - isl["z"])
+            edge_noise = 1.0 + (value_noise(X * 0.08, Z * 0.08, seed + 41) - 0.5) * 0.25
+            m = 1 - smoothstep(isl["r"] * 0.82 * edge_noise, isl["r"] * edge_noise, d)
+            mask = np.maximum(mask, m)
+            base = np.where(m > 0.01, np.maximum(base, isl.get("h", 0.0)), base)
+        base = np.where(base < -1e8, 0.0, base)
+        h = np.where(mask > 0.02, base + h * 0.35 * mask, void)
+    return Heightmap(size, step, h, void)
 
 
 # ----------------------------------------------------------------------------- Straßen
@@ -140,24 +187,27 @@ def _seg_dist(px, pz, ax, az, bx, bz):
     return math.hypot(px - (ax + t * dx), pz - (az + t * dz))
 
 
-def road_distance(x: float, z: float) -> float:
+def road_distance(roads: list, x: float, z: float) -> float:
     best = 1e9
-    for road in W.ROADS:
+    for road in roads:
         pts = road["pts"]
         for k in range(len(pts) - 1):
             best = min(best, _seg_dist(x, z, pts[k][0], pts[k][1], pts[k + 1][0], pts[k + 1][1]) - road["w"] / 2)
     return best
 
 
-# ----------------------------------------------------------------------------- Hindernisse
-# Kollisions-Grundflächen je Requisitentyp (Kreis: rad, Rechteck: w x d)
-_CIRCLE = {"well": 1.5, "tower": None, "fountain": 2.8, "windmill": 3.6, "haystack": 1.6, "tent": 2.4,
-           "bigtent": 3.6, "campfire": 0.9, "watchtower": 2.2, "brazier": 0.6, "barrel": 0.5, "crate": 0.6,
-           "lantern": 0.25, "deadtree": 0.6, "cauldron": 0.8, "anvil": 0.6, "stall": 1.6, "wagon": 1.8,
-           "minecart": 1.0, "orepile": 1.2, "scarecrow": 0.4, "pillar": 1.0, "sarcophagus": 1.4,
-           "altar": 1.8, "throne": 1.0, "sign": 0.25, "cart": 1.4, "weaponrack": 0.8, "bench": 0.8}
-_BOX = {"house", "inn", "smithy", "chapel", "keep", "kitchen", "barn", "shed", "hut", "mausoleum", "mine"}
-_SEGMENT = {"wall": 3.0, "palisade": 0.8, "fence": 0.3, "ironfence": 0.25}
+# ----------------------------------------------------------------------------- Requisiten & Hindernisse
+_CIRCLE = {"well": 1.5, "fountain": 2.8, "windmill": 3.6, "haystack": 1.6, "tent": 2.4, "bigtent": 3.6, "campfire": 0.9,
+           "watchtower": 2.2, "brazier": 0.6, "barrel": 0.5, "crate": 0.6, "lantern": 0.25, "deadtree": 0.6,
+           "cauldron": 0.8, "anvil": 0.6, "stall": 1.6, "wagon": 1.8, "minecart": 1.0, "orepile": 1.2, "scarecrow": 0.4,
+           "sarcophagus": 1.4, "altar": 1.8, "throne": 1.2, "sign": 0.25, "cart": 1.4, "weaponrack": 0.8, "bench": 0.8,
+           "statue": 1.2, "obelisk": 1.0, "runestone": 0.8, "crystal_big": 1.6, "brazier_big": 1.2, "forge": 1.6,
+           "mailbox": 0.4, "moonwell": 2.5, "standing_stone": 0.9, "ice_spike": 1.2, "lava_rock": 1.5, "portal_ring": 2.0,
+           "bonfire": 1.4, "beehive": 0.6, "totem": 0.6, "tree_house": 2.0, "giant_mushroom": 1.0, "column": 0.9}
+_BOX = {"house", "inn", "smithy", "chapel", "keep", "kitchen", "barn", "shed", "hut", "mausoleum", "mine", "dwarf_hall",
+        "dwarf_house", "elf_house", "temple", "ruin_wall", "watch_post", "hall", "bank", "auction", "stable", "tavern",
+        "forge_house", "ash_fort", "sky_temple", "arena_wall"}
+_SEGMENT = {"wall": 3.0, "palisade": 0.8, "fence": 0.3, "ironfence": 0.25, "ice_wall": 3.0, "ruin_line": 1.5}
 
 
 def obstacles_for(props: list[dict]) -> list[dict]:
@@ -165,23 +215,30 @@ def obstacles_for(props: list[dict]) -> list[dict]:
     for p in props:
         t = p["t"]
         if t in _SEGMENT:
-            out.append({"k": "seg", "x1": p["x1"], "z1": p["z1"], "x2": p["x2"], "z2": p["z2"], "w": _SEGMENT[t]})
+            out.append({"k": "seg", "x1": p["x1"], "z1": p["z1"], "x2": p["x2"], "z2": p["z2"], "w": p.get("th", _SEGMENT[t])})
         elif t in _BOX:
             w, d = p.get("w", 6), p.get("d", 6)
-            if t == "smithy":       # offene Schmiede: nur die hintere Hälfte ist massiv
-                w, d = w, d * 0.5
+            if t == "smithy":
+                d = d * 0.5
             if t == "mine":
                 w, d = 7, 4
             out.append({"k": "box", "x": p["x"], "z": p["z"], "w": w, "d": d, "r": p.get("r", 0.0)})
         elif t == "tower":
             out.append({"k": "circle", "x": p["x"], "z": p["z"], "rad": p["rad"]})
+        elif t == "gatearch":
+            w = p.get("w", 10)
+            r = p.get("r", 0.0)
+            for s in (-1, 1):
+                ox = math.cos(r) * s * (w / 2 - 1)
+                oz = -math.sin(r) * s * (w / 2 - 1)
+                out.append({"k": "circle", "x": p["x"] + ox, "z": p["z"] + oz, "rad": 1.6})
         elif t == "pillar":
             out.append({"k": "circle", "x": p["x"], "z": p["z"], "rad": 1.6 if p.get("big") else 1.0})
-        elif t in _CIRCLE and _CIRCLE[t]:
+        elif t in _CIRCLE:
             out.append({"k": "circle", "x": p["x"], "z": p["z"], "rad": _CIRCLE[t] * p.get("s", 1.0)})
-        elif t in ("tree", "pine", "birch"):
+        elif t in ("tree", "pine", "birch", "skytree", "ashtree", "mushroom"):
             out.append({"k": "circle", "x": p["x"], "z": p["z"], "rad": 0.45 * p.get("s", 1.0)})
-        elif t == "rock" and p.get("s", 1.0) > 0.8:
+        elif t in ("rock", "crystal") and p.get("s", 1.0) > 0.8:
             out.append({"k": "circle", "x": p["x"], "z": p["z"], "rad": 1.1 * p.get("s", 1.0)})
     return out
 
@@ -197,26 +254,32 @@ def _footprint_radius(p: dict) -> float:
     return _CIRCLE.get(t) or 2.0
 
 
-@lru_cache(maxsize=None)
-def gruenmark_props() -> list[dict]:
-    """Feste Requisiten plus prozedural verteilte Bäume, Büsche und Felsen."""
-    hm = gruenmark_heightmap()
-    rng = random.Random(4711)
-    fixed = list(W.PROPS)
+def generate_props(zone: dict, hm: Heightmap, special_points: list[tuple]) -> list[dict]:
+    """Feste Requisiten plus prozedural verteilte Bäume, Büsche, Felsen und Blumen."""
+    cfg = zone.get("veg", {})
+    rng = random.Random(cfg.get("seed", 4711))
+    fixed = list(zone.get("props", []))
+    lim = zone["size"] / 2 - 12
     occupied = [(p["x"], p["z"], _footprint_radius(p) + 3.5) for p in fixed if "x" in p]
     segs = [(p["x1"], p["z1"], p["x2"], p["z2"]) for p in fixed if "x1" in p]
-    for f in W.FLATTEN[:2]:   # Dorf und Burg frei halten
-        occupied.append((f["x"], f["z"], f["r"] - 4))
-    for npc_like in _special_points():
-        occupied.append((npc_like[0], npc_like[1], 6))
-    for wtr in W.WATER:
+    for c in cfg.get("clear", []):
+        occupied.append((c["x"], c["z"], c["r"]))
+    for (x, z) in special_points:
+        occupied.append((x, z, 5))
+    for wtr in zone.get("water", []):
         occupied.append((wtr["x"], wtr["z"], wtr["r"] + 2))
+    for pv in zone.get("paved", []):
+        if "r" in pv:
+            occupied.append((pv["x"], pv["z"], pv["r"] + 1))
     fields = [p for p in fixed if p["t"] == "field"]
+    roads = zone.get("roads", [])
 
     def free(x, z, margin=0.0):
-        if abs(x) > 228 or abs(z) > 228:
+        if abs(x) > lim or abs(z) > lim:
             return False
-        if road_distance(x, z) < 3.5:
+        if hm.is_void(x, z):
+            return False
+        if roads and road_distance(roads, x, z) < 3.5:
             return False
         for (ox, oz, r) in occupied:
             if (x - ox) ** 2 + (z - oz) ** 2 < (r + margin) ** 2:
@@ -229,82 +292,92 @@ def gruenmark_props() -> list[dict]:
                 return False
         return True
 
-    out = []
-
-    def forest_density(x, z):
-        d = 0.08 + 0.12 * (fbm(x * 0.02, z * 0.02, 3, 21) + 1)
-        # Wolfsforst im Westen/Nordwesten
-        dist_forest = math.hypot(x + 135, z + 55)
-        d += 0.9 * (1 - smoothstep(30, 95, dist_forest))
-        # Waldrand im Norden hinter der Burg und im Süden
-        d += 0.35 * (1 - smoothstep(10, 60, math.hypot(x + 80, z + 150)))
-        d += 0.35 * (1 - smoothstep(10, 60, math.hypot(x - 40, z - 170)))
-        d += 0.25 * (1 - smoothstep(10, 50, math.hypot(x + 170, z - 40)))
-        # Gebirgsrand
-        ring = (abs(x) ** 4 + abs(z) ** 4) ** 0.25
-        d += 0.5 * smoothstep(165, 195, ring) * (1 - smoothstep(205, 225, ring))
+    def density(x, z):
+        d = cfg.get("base", 0.1) * (1 + 0.8 * math.sin(x * 0.021 + 1.3) * math.cos(z * 0.017 + 0.4))
+        for f in cfg.get("forests", []):
+            dd = math.hypot(x - f["x"], z - f["z"])
+            if dd < f["r"] + 30:
+                d += f.get("density", 0.8) * max(0.0, 1 - max(0.0, dd - f["r"] * 0.6) / (f["r"] * 0.4 + 30))
+        if cfg.get("edge_density"):
+            ring = (abs(x) ** 4 + abs(z) ** 4) ** 0.25
+            d += cfg["edge_density"] * max(0.0, min(1.0, (ring - lim * 0.75) / (lim * 0.12)))
         return d
 
-    attempts = 0
-    while len(out) < 1500 and attempts < 30000:
-        attempts += 1
-        x = rng.uniform(-226, 226)
-        z = rng.uniform(-226, 226)
-        if rng.random() > forest_density(x, z):
-            continue
-        if not free(x, z):
-            continue
+    def pick_kind(x, z):
+        for f in cfg.get("forests", []):
+            if f.get("kinds") and math.hypot(x - f["x"], z - f["z"]) < f["r"]:
+                return _weighted(rng, f["kinds"])
         h = hm.height(x, z)
-        ring = (abs(x) ** 4 + abs(z) ** 4) ** 0.25
-        if ring > 190 or h > 14 or math.hypot(x + 135, z + 55) < 70 and rng.random() < 0.3:
-            kind = "pine"
-        elif math.hypot(x + 70, z) < 50 and rng.random() < 0.6:
-            kind = "birch"
-        else:
-            kind = "tree"
-        s = rng.uniform(0.8, 1.35)
-        out.append({"t": kind, "x": round(x, 1), "z": round(z, 1), "s": round(s, 2),
-                    "r": round(rng.uniform(0, math.tau), 2)})
-        occupied.append((x, z, 2.2 * s))
+        if cfg.get("high_kind") and h > cfg.get("high_level", 14):
+            return cfg["high_kind"]
+        return _weighted(rng, cfg.get("kinds", [("tree", 1.0)]))
 
-    # Büsche und Felsen
-    for _ in range(420):
-        x = rng.uniform(-224, 224)
-        z = rng.uniform(-224, 224)
+    out = []
+    attempts = 0
+    target = cfg.get("count", 1500)
+    while len(out) < target and attempts < target * 25:
+        attempts += 1
+        x = rng.uniform(-lim, lim)
+        z = rng.uniform(-lim, lim)
+        if rng.random() > density(x, z):
+            continue
+        if not free(x, z):
+            continue
+        if hm.slope(x, z) > 0.9:
+            continue
+        kind = pick_kind(x, z)
+        s = rng.uniform(0.8, 1.35)
+        out.append({"t": kind, "x": round(x, 1), "z": round(z, 1), "s": round(s, 2), "r": round(rng.uniform(0, math.tau), 2)})
+        occupied.append((x, z, 2.2 * s))
+    for _ in range(cfg.get("rocks", 300)):
+        x = rng.uniform(-lim, lim)
+        z = rng.uniform(-lim, lim)
         if not free(x, z):
             continue
         ring = (abs(x) ** 4 + abs(z) ** 4) ** 0.25
-        if ring > 180 and rng.random() < 0.7 or rng.random() < 0.3:
-            s = rng.uniform(0.5, 1.8) if ring < 180 else rng.uniform(1.2, 3.2)
-            out.append({"t": "rock", "x": round(x, 1), "z": round(z, 1), "s": round(s, 2),
-                        "r": round(rng.uniform(0, math.tau), 2)})
+        big = ring > lim * 0.8
+        kind = cfg.get("rock_kind", "rock")
+        if rng.random() < cfg.get("bush_share", 0.45) and not big:
+            out.append({"t": cfg.get("bush_kind", "bush"), "x": round(x, 1), "z": round(z, 1),
+                        "s": round(rng.uniform(0.7, 1.3), 2), "r": round(rng.uniform(0, math.tau), 2)})
         else:
-            out.append({"t": "bush", "x": round(x, 1), "z": round(z, 1), "s": round(rng.uniform(0.7, 1.3), 2),
+            s = rng.uniform(1.2, 3.2) if big else rng.uniform(0.5, 1.8)
+            out.append({"t": kind, "x": round(x, 1), "z": round(z, 1), "s": round(s, 2), "r": round(rng.uniform(0, math.tau), 2)})
+    for _ in range(cfg.get("flowers", 260)):
+        x = rng.uniform(-lim * 0.8, lim * 0.8)
+        z = rng.uniform(-lim * 0.8, lim * 0.8)
+        if hm.is_void(x, z):
+            continue
+        if roads and road_distance(roads, x, z) < 2:
+            continue
+        if any((x - wx["x"]) ** 2 + (z - wx["z"]) ** 2 < (wx["r"] + 1) ** 2 for wx in zone.get("water", [])):
+            continue
+        out.append({"t": "flowers", "x": round(x, 1), "z": round(z, 1), "s": round(rng.uniform(0.7, 1.4), 2), "v": rng.randint(0, 3)})
+    for extra in cfg.get("scatter", []):
+        for _ in range(extra["n"]):
+            x = rng.uniform(-lim, lim)
+            z = rng.uniform(-lim, lim)
+            if extra.get("area"):
+                a = extra["area"]
+                ang = rng.uniform(0, math.tau)
+                dd = a["r"] * math.sqrt(rng.random())
+                x, z = a["x"] + math.cos(ang) * dd, a["z"] + math.sin(ang) * dd
+            if not free(x, z):
+                continue
+            out.append({"t": extra["t"], "x": round(x, 1), "z": round(z, 1), "s": round(rng.uniform(*extra.get("s", (0.8, 1.3))), 2),
                         "r": round(rng.uniform(0, math.tau), 2)})
-    # Blumenwiesen (rein dekorativ, ohne Kollision)
-    for _ in range(260):
-        x = rng.uniform(-170, 170)
-        z = rng.uniform(-170, 170)
-        if road_distance(x, z) < 2 or math.hypot(x - 2, z - 18) < 14:
-            continue
-        if any((x - wx["x"]) ** 2 + (z - wx["z"]) ** 2 < (wx["r"] + 1) ** 2 for wx in W.WATER):
-            continue
-        out.append({"t": "flowers", "x": round(x, 1), "z": round(z, 1), "s": round(rng.uniform(0.7, 1.4), 2),
-                    "v": rng.randint(0, 3)})
+            occupied.append((x, z, 2.0))
     return fixed + out
 
 
-def _special_points():
-    from .content.npcs import NPCS
-    pts = [(n["pos"][0], n["pos"][1]) for n in NPCS.values() if n["zone"] == "gruenmark"]
-    for s in W.SPAWNS["gruenmark"]:
-        if "pos" in s:
-            pts.append(tuple(s["pos"]))
-    for o in W.OBJECTS["gruenmark"]:
-        pts.append(tuple(o["pos"]))
-    for p in W.PORTALS["gruenmark"]:
-        pts.append((p["x"], p["z"]))
-    return pts
+def _weighted(rng: random.Random, items: list) -> str:
+    total = sum(w for _, w in items)
+    r = rng.uniform(0, total)
+    for k, w in items:
+        r -= w
+        if r <= 0:
+            return k
+    return items[-1][0]
 
 
 # ----------------------------------------------------------------------------- Wegfindung (Dungeon)
@@ -357,7 +430,6 @@ class RectNav:
             return self.clamp(sx, sz, 0.6)
         if b < 0 or a == b:
             return tx, tz
-        # Breitensuche über benachbarte Rechtecke
         prev = {a: None}
         queue = [a]
         while queue:
@@ -374,7 +446,6 @@ class RectNav:
         while prev[node] != a:
             node = prev[node]
         cx, cz = self._overlap_center(self.rects[a], self.rects[node])
-        # Ist der Wegpunkt erreicht, direkt ins nächste Rechteck weiterlaufen
         if math.hypot(cx - sx, cz - sz) < 1.0:
             r = self.rects[node]
             return (r[0] + r[2]) / 2, (r[1] + r[3]) / 2
@@ -382,32 +453,6 @@ class RectNav:
 
 
 @lru_cache(maxsize=None)
-def krypta_nav() -> RectNav:
-    return RectNav(W.KRYPTA_RECTS)
-
-
-def zone_static_data(zone_id: str) -> dict:
-    """Alles, was der Client zum Aufbau einer Zone braucht."""
-    z = W.ZONES[zone_id]
-    data = {
-        "id": zone_id,
-        "name": z["name"],
-        "type": z["type"],
-        "sky": z["sky"],
-        "portals": W.PORTALS.get(zone_id, []),
-    }
-    if zone_id == "gruenmark":
-        hm = gruenmark_heightmap()
-        props = gruenmark_props()
-        data.update({
-            "size": hm.size, "step": hm.step, "n": hm.n, "heights": hm.encoded(),
-            "water": W.WATER, "roads": W.ROADS, "plaza": W.PLAZA, "props": props,
-            "obstacles": obstacles_for(props), "subzones": W.SUBZONES,
-            "graveyard": z["graveyard"],
-        })
-    else:
-        data.update({
-            "rects": W.KRYPTA_RECTS, "rooms": W.KRYPTA_ROOMS, "props": W.KRYPTA_PROPS,
-            "obstacles": obstacles_for(W.KRYPTA_PROPS),
-        })
-    return data
+def nav_for(zone_id: str) -> RectNav:
+    from ..content.world import ZONES
+    return RectNav(ZONES[zone_id]["rects"])

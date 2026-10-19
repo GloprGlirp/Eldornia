@@ -1,19 +1,19 @@
-"""Spielobjekte: Spieler, Gegner (Mobs), NPCs und Sammelobjekte."""
+"""Spielobjekte: Spieler, Gegner, Begleiter, NPCs, Sammelobjekte, Fallen und Bodeneffekte."""
 from __future__ import annotations
 
 import itertools
 import math
 import random
 import time
-from dataclasses import dataclass, field
 
-from .content.classes import CLASSES, base_stats
-from .content.items import EQUIP_SLOTS, ITEMS
-from .content.mobs import mob_armor, mob_damage, mob_max_hp
+from ..content.classes import CLASSES, RESOURCES
 
 _ids = itertools.count(1)
-BAG_SLOTS = 24
+BAG_SLOTS = 40
 RUN_SPEED = 7.0
+BACK_SPEED = 4.5
+SPRINT_MULT = 1.35
+MOUNT_SPEED = {1: 1.6, 2: 2.0}      # Faktor auf Laufgeschwindigkeit (normal / episch)
 
 
 def new_id() -> int:
@@ -24,32 +24,81 @@ def now() -> float:
     return time.monotonic()
 
 
-@dataclass
+# =============================================================================== Auren
 class Aura:
-    id: str
-    name: str
-    src: int
-    expires: float
-    dur: float
-    icon: str = "buff"
-    color: str = "#ffffff"
-    debuff: bool = False
-    stats: dict = field(default_factory=dict)
-    slow: float = 0.0
-    root: bool = False
-    stun: bool = False
-    dot: dict | None = None          # {"amount": n, "school": s, "interval": 1.0, "next": t, "name": ...}
-    enrage: float = 0.0              # Schadensbonus (0.5 = +50 %)
-    haste: float = 0.0               # Angriffstempo-Bonus
-    chill_attackers: bool = False
-    taunt: bool = False
-    food: dict | None = None         # {"hp": pro Sek., "mp": pro Sek.}
+    """Buff oder Debuff. Die Definition stammt aus den Inhaltsdaten (AURA(...))."""
+
+    __slots__ = ("id", "name", "src", "expires", "dur", "icon", "debuff", "stats", "pct", "slow", "root", "stun",
+                 "silence", "fear", "poly", "stealth", "immune", "dot", "hot", "absorb", "reflect", "stacks",
+                 "max_stacks", "charges", "break_dmg", "taunt", "form", "marked", "parry_all", "block_all",
+                 "cheat_death", "lifesteal", "chill_attackers", "reflect_melee", "dispel", "next_tick", "dmg_taken_acc",
+                 "removable", "proc", "spread", "school", "ability", "food", "sleep", "extra")
+
+    def __init__(self, d: dict, src_id: int, t: float, level: int = 1, dur: float | None = None, scale_stats=True):
+        self.id = d["id"]
+        self.name = d.get("name", self.id)
+        self.src = src_id
+        self.dur = float(dur if dur is not None else d.get("dur", 10))
+        self.expires = t + self.dur
+        self.icon = d.get("icon")
+        self.debuff = bool(d.get("debuff", False))
+        stats = d.get("stats", {})
+        self.stats = {}
+        for k, v in stats.items():
+            self.stats[k] = (v[0] + v[1] * level) if isinstance(v, (tuple, list)) else v
+        self.pct = dict(d.get("pct", {}))
+        self.slow = float(d.get("slow", 0.0))
+        self.root = bool(d.get("root", False))
+        self.stun = bool(d.get("stun", False))
+        self.silence = bool(d.get("silence", False))
+        self.fear = bool(d.get("fear", False))
+        self.poly = bool(d.get("poly", False))
+        self.sleep = bool(d.get("sleep", False))
+        self.stealth = bool(d.get("stealth", False))
+        self.immune = bool(d.get("immune", False))
+        self.dot = dict(d["dot"]) if d.get("dot") else None
+        self.hot = dict(d["hot"]) if d.get("hot") else None
+        self.absorb = 0.0
+        self.reflect = d.get("reflect")
+        self.max_stacks = int(d.get("stacks", 1))
+        self.stacks = 1
+        self.charges = int(d.get("charges", 0))
+        self.break_dmg = d.get("break_dmg")
+        self.taunt = bool(d.get("taunt", False))
+        self.form = d.get("form")
+        self.marked = bool(d.get("marked", False))
+        self.parry_all = bool(d.get("parry_all", False))
+        self.block_all = bool(d.get("block_all", False))
+        self.cheat_death = bool(d.get("cheat_death", False))
+        self.lifesteal = float(d.get("lifesteal", 0.0))
+        self.chill_attackers = float(d.get("chill_attackers", 0.0))
+        self.reflect_melee = float(d.get("reflect_melee", 0.0))
+        self.dispel = d.get("dispel", "magic" if self.debuff else None)
+        self.removable = bool(d.get("removable", not self.debuff))
+        self.proc = d.get("proc")
+        self.spread = d.get("spread")
+        self.school = d.get("school")
+        self.ability = d.get("ability")
+        self.food = d.get("food")
+        self.extra = {}
+        self.dmg_taken_acc = 0.0
+        tick = None
+        if self.dot:
+            tick = self.dot.get("interval", 3)
+        elif self.hot:
+            tick = self.hot.get("interval", 3)
+        self.next_tick = t + tick if tick else 0.0
+
+    @property
+    def cc(self) -> bool:
+        return self.stun or self.root or self.fear or self.poly or self.sleep or self.silence
 
     def client(self, t: float) -> list:
-        return [self.id, self.name, round(max(0.0, self.expires - t), 1), round(self.dur, 1), self.icon,
-                self.color, 1 if self.debuff else 0]
+        return [self.id, self.name, round(max(0.0, self.expires - t), 1), round(self.dur, 1), self.icon or "",
+                1 if self.debuff else 0, self.stacks, self.src]
 
 
+# =============================================================================== Basis
 class Unit:
     kind = "unit"
 
@@ -62,9 +111,9 @@ class Unit:
         self.zone = None
         self.hp = 1
         self.max_hp = 1
-        self.power = 0
+        self.power = 0.0
         self.max_power = 0
-        self.power_type = None
+        self.power_type: str | None = None
         self.target: int | None = None
         self.auras: list[Aura] = []
         self.cast: dict | None = None
@@ -73,11 +122,19 @@ class Unit:
         self.scale = 1.0
         self.model = "human"
         self.look: dict = {}
-        self.hostile = False
+        self.hostile = False          # aus Sicht der Spieler feindlich
+        self.side = "neutral"         # player | mob | neutral
         self.dirty: set[str] = set()
         self.combat = False
         self.emote: str | None = None
         self.cast_lock_until = 0.0
+        self.stats: dict = {}
+        self.mods: dict = {}
+        self.resist: dict = {}
+        self.hidden = False
+        self.last_hit_t = 0.0
+        self.last_reactive: dict[str, float] = {}   # block/dodge/parry/crit -> Zeitpunkt
+        self.team: int | None = None   # Arena / Duell
 
     # ------------------------------------------------------------------ Hilfen
     def mark(self, *fields: str):
@@ -92,11 +149,17 @@ class Unit:
     def dist(self, o: "Unit") -> float:
         return math.hypot(self.x - o.x, self.z - o.z)
 
+    def dist3(self, o: "Unit") -> float:
+        return math.sqrt((self.x - o.x) ** 2 + (self.z - o.z) ** 2 + (self.y - o.y) ** 2)
+
     def dist_xz(self, x: float, z: float) -> float:
         return math.hypot(self.x - x, self.z - z)
 
     def angle_to(self, o) -> float:
         return math.atan2(-(o.x - self.x), -(o.z - self.z))
+
+    def angle_to_xz(self, x: float, z: float) -> float:
+        return math.atan2(-(x - self.x), -(z - self.z))
 
     def facing(self, o: "Unit", arc: float = math.pi) -> bool:
         """Steht o im Sichtkegel (Standard: vordere 180°)?"""
@@ -104,6 +167,10 @@ class Unit:
             return True
         diff = (self.angle_to(o) - self.r + math.pi) % (2 * math.pi) - math.pi
         return abs(diff) <= arc / 2
+
+    def behind(self, o: "Unit") -> bool:
+        """Steht self hinter o?"""
+        return not o.facing(self, math.pi * 1.1)
 
     @property
     def alive(self) -> bool:
@@ -115,10 +182,21 @@ class Unit:
                 return a
         return None
 
-    def add_aura(self, aura: Aura):
-        self.remove_aura(aura.id)
+    def add_aura(self, aura: Aura) -> Aura:
+        old = self.has_aura(aura.id)
+        if old and old.max_stacks > 1:
+            old.stacks = min(old.max_stacks, old.stacks + 1)
+            old.expires = aura.expires
+            old.dur = aura.dur
+            if aura.dot:
+                old.dot = aura.dot
+            self.mark("au")
+            return old
+        if old:
+            self.auras.remove(old)
         self.auras.append(aura)
         self.mark("au")
+        return aura
 
     def remove_aura(self, aura_id: str) -> bool:
         before = len(self.auras)
@@ -128,17 +206,49 @@ class Unit:
             return True
         return False
 
+    def _flag(self, name: str) -> bool:
+        for a in self.auras:
+            if getattr(a, name):
+                return True
+        return False
+
     @property
     def stunned(self) -> bool:
-        return any(a.stun for a in self.auras)
+        return self._flag("stun") or self._flag("sleep")
+
+    @property
+    def incapacitated(self) -> bool:
+        return self._flag("stun") or self._flag("poly") or self._flag("fear") or self._flag("sleep")
 
     @property
     def rooted(self) -> bool:
-        return any(a.root for a in self.auras) or self.stunned
+        return self._flag("root") or self.incapacitated
+
+    @property
+    def silenced(self) -> bool:
+        return self._flag("silence")
+
+    @property
+    def stealthed(self) -> bool:
+        return self._flag("stealth")
+
+    @property
+    def immune(self) -> bool:
+        return self._flag("immune")
+
+    def form(self) -> str | None:
+        for a in self.auras:
+            if a.form:
+                return a.form
+        return None
 
     def speed_mult(self) -> float:
         slow = max((a.slow for a in self.auras), default=0.0)
-        return max(0.2, 1.0 - slow)
+        bonus = sum(a.pct.get("speed", 0) for a in self.auras) / 100.0
+        return max(0.2, (1.0 - slow) * (1.0 + bonus))
+
+    def aura_pct(self, key: str) -> float:
+        return sum(a.pct.get(key, 0) * (a.stacks if key in ("iaido",) else 1) for a in self.auras)
 
     def aura_stat(self, stat: str) -> float:
         return sum(a.stats.get(stat, 0) for a in self.auras)
@@ -152,6 +262,8 @@ class Unit:
             f |= 1
         if self.combat:
             f |= 2
+        if self.stealthed:
+            f |= 32
         return f
 
     def spawn_info(self) -> dict:
@@ -160,8 +272,8 @@ class Unit:
             "model": self.model, "scale": self.scale, "look": self.look, "rad": self.radius,
             "p": [round(self.x, 2), round(self.y, 2), round(self.z, 2), round(self.r, 3)],
             "hp": self.hp, "mhp": self.max_hp, "pw": int(self.power), "mpw": self.max_power, "pt": self.power_type,
-            "tg": self.target, "hostile": self.hostile, "st": self.state_flags(),
-            "cast": self.cast_client(), "au": self.client_auras(now()), "emote": self.emote,
+            "tg": self.target, "hostile": self.hostile, "side": self.side, "st": self.state_flags(),
+            "cast": self.cast_client(), "au": self.client_auras(now()), "emote": self.emote, "team": self.team,
         }
 
     def cast_client(self):
@@ -169,7 +281,8 @@ class Unit:
             return None
         c = self.cast
         return {"name": c["name"], "dur": round(c["end"] - c["start"], 2), "left": round(c["end"] - now(), 2),
-                "ch": c.get("channel", False), "icon": c.get("icon"), "school": c.get("school"), "tg": c.get("tid")}
+                "ch": c.get("channel", False), "icon": c.get("icon"), "school": c.get("school"), "tg": c.get("tid"),
+                "ab": c.get("ab"), "ni": bool(c.get("uninterruptible")), "gp": c.get("gp")}
 
     def delta(self, fields: set[str], for_self: bool = False) -> dict:
         d = {"id": self.id}
@@ -184,6 +297,7 @@ class Unit:
             elif f == "pw":
                 d["pw"] = int(self.power)
                 d["mpw"] = self.max_power
+                d["pt"] = self.power_type
             elif f == "tg":
                 d["tg"] = self.target
             elif f == "st":
@@ -200,43 +314,62 @@ class Unit:
                 d["emote"] = self.emote
             elif f == "name":
                 d["name"] = self.name
+                d["title"] = self.title
+            elif f == "model":
+                d["model"] = self.model
+                d["scale"] = self.scale
+            elif f == "team":
+                d["team"] = self.team
+                d["hostile"] = self.hostile
         return d
 
 
-# ============================================================================== Spieler
+# =============================================================================== Spieler
 class Player(Unit):
     kind = "player"
 
-    def __init__(self, record, session):
-        super().__init__(record.name, record.level, record.x, record.z, record.rot)
+    def __init__(self, data: dict, session):
+        super().__init__(data["name"], data["level"], data["x"], data["z"], data["rot"])
         self.session = session
-        self.user_id = record.user_id
-        self.char_id = record.id
-        self.class_id = record.class_id
-        self.cls = CLASSES[record.class_id]
-        self.xp = record.xp
-        self.copper = record.copper
-        self.zone_id = record.zone or "gruenmark"
-        self.y = record.y
-        self.look = dict(record.look or {})
-        self.bags: list = list(record.inventory or [])
-        self.bags = (self.bags + [None] * BAG_SLOTS)[:BAG_SLOTS]
-        self.equipment: dict = {k: v for k, v in (record.equipment or {}).items() if k in EQUIP_SLOTS and v in ITEMS}
-        q = record.quests or {}
-        self.quests_active: dict[str, list[int]] = dict(q.get("active", {}))
-        self.quests_done: set[str] = set(q.get("done", []))
-        self.played_seconds = record.played_seconds or 0
+        self.user_id = data["user_id"]
+        self.username = data.get("username", "")
+        self.char_id = data["id"]
+        self.class_id = data["class_id"]
+        self.cls = CLASSES[self.class_id]
+        self.xp = data["xp"]
+        self.copper = data["copper"]
+        self.zone_id = data["zone"]
+        self.y = data["y"]
+        self.look = dict(data.get("look") or {})
+        self.base_look = {k: v for k, v in self.look.items() if k not in ("gear", "cls")}
+        self.bags: list = (list(data.get("bags") or []) + [None] * BAG_SLOTS)[:BAG_SLOTS]
+        self.equipment: dict = dict(data.get("equipment") or {})
+        self.quests_active: dict[str, list[int]] = dict(data.get("quests_active") or {})
+        self.quests_done: dict[str, float] = dict(data.get("quests_done") or {})   # quest_id -> Zeitstempel
+        self.talents: dict[str, int] = dict(data.get("talents") or {})
+        self.action_bars: list = list(data.get("action_bars") or [])
+        self.professions: dict = dict(data.get("professions") or {})
+        self.reputation: dict = dict(data.get("reputation") or {})
+        self.currencies: dict = dict(data.get("currencies") or {})
+        self.achievements: dict = dict(data.get("achievements") or {})
+        self.collections: dict = dict(data.get("collections") or {"mounts": [], "pets": [], "titles": [], "skins": []})
+        self.discovered: dict = dict(data.get("discovered") or {"stones": [], "subzones": [], "zones": []})
+        self.misc: dict = dict(data.get("misc") or {})
+        self.guild_id: int | None = data.get("guild_id")
+        self.guild_rank: str | None = None
+        self.played_seconds = data.get("played_seconds") or 0
         self.login_time = now()
         self.power_type = self.cls["resource"]
         self.model = "human"
         self.radius = 0.5
+        self.side = "player"
         self.hostile = False
-        self.stats: dict = {}
-        self.cooldowns: dict[str, float] = {}
+        self.cooldowns: dict[str, float] = {k: now() + v for k, v in (data.get("cooldowns") or {}).items() if v > 0}
         self.gcd_until = 0.0
         self.potion_cd_until = 0.0
         self.auto_attack = False
         self.swing_ready = 0.0
+        self.oh_swing_ready = 0.0
         self.combat_until = 0.0
         self.last_mana_spend = -100.0
         self.party = None
@@ -246,142 +379,126 @@ class Player(Unit):
         self.sitting = False
         self.loot_open: int | None = None
         self.moving = False
+        self.sprinting = False
+        self.mounted: str | None = None
+        self.mount_speed = 1.0
         self.last_move_t = now()
-        self.move_budget = 12.0                 # Bewegungsprüfung (Token-Bucket in Metern)
+        self.move_budget = 14.0
         self.move_budget_t = now()
         self.portal_lock = 0.0
         self.invite_from: int | None = None
+        self.guild_invite: int | None = None
+        self.duel_with: int | None = None
+        self.duel_invite: int | None = None
+        self.trade = None
         self.chat_times: list[float] = []
         self.next_regen = now() + 1.0
         self.out_of_range_msg = 0.0
-        self.taunt_target = None
         self.ready = False
-        self.recalc(full=record.hp < 0)
-        if record.hp >= 0:
-            self.hp = max(1, min(self.max_hp, record.hp))
-            self.power = max(0, min(self.max_power, record.res)) if record.res >= 0 else self.max_power
-        if self.power_type == "rage":
-            self.power = 0
-        self.update_gear_look()
+        self.combo = 0
+        self.combo_target: int | None = None
+        self.pets: list[int] = []
+        self.companion: int | None = None
+        self.queue: dict | None = None
+        self.instance_key: str | None = None
+        self.last_safe = (self.x, self.z)
+        self.busy = False            # laufende Wirtschaftstransaktion
+        self.save_dirty = True
+        self.gm = bool(data.get("is_admin", False))
+        self.title = self.misc.get("title_text", "")
+        self.recalc_cb = None         # wird von der Welt gesetzt
 
-    # ------------------------------------------------------------------ Werte
-    def weapon(self) -> dict:
-        it = ITEMS.get(self.equipment.get("main_hand") or "")
+    # ------------------------------------------------------------------ Waffen
+    def item_def(self, slot: str) -> dict | None:
+        from ..content.items import ITEMS
+        inst = self.equipment.get(slot)
+        if not inst:
+            return None
+        return ITEMS.get(inst["i"])
+
+    def weapon(self, off: bool = False) -> dict:
+        it = self.item_def("off_hand" if off else "main_hand")
         if it and it["type"] == "weapon":
-            return {"min": it["dmg"][0], "max": it["dmg"][1], "speed": it["speed"]}
-        return {"min": 1, "max": 3, "speed": 2.0}
+            return {"min": it["dmg"][0], "max": it["dmg"][1], "speed": it["speed"], "sub": it["sub"],
+                    "two": it.get("two_hand", False), "proc": it.get("proc")}
+        if off:
+            return {}
+        return {"min": 1 + self.level // 2, "max": 3 + self.level, "speed": 2.0, "sub": "faust", "two": False, "proc": None}
 
     def has_shield(self) -> bool:
-        it = ITEMS.get(self.equipment.get("off_hand") or "")
+        it = self.item_def("off_hand")
         return bool(it and it.get("sub") == "schild")
 
-    def recalc(self, full: bool = False):
-        st = base_stats(self.class_id, self.level)
-        st.update({"armor": 0, "sp": 0, "ap": 0})
-        for slot, item_id in self.equipment.items():
-            it = ITEMS.get(item_id)
-            if not it:
-                continue
-            for k, v in it.get("stats", {}).items():
-                st[k] = st.get(k, 0) + v
-        for a in self.auras:
-            for k, v in a.stats.items():
-                st[k] = st.get(k, 0) + v
-        lvl = self.level
-        st["armor"] += st["agi"] * 2
-        if self.class_id == "ritter":
-            st["ap"] += st["str"] * 2 + lvl * 2
-            st["parry"] = 5.0
-        else:
-            st["ap"] += st["str"]
-            st["parry"] = 0.0
-        st["crit"] = 5.0 + st["agi"] / 20.0
-        st["spell_crit"] = 5.0 + st["int"] / 60.0 + (1.0 if self.class_id == "magier" else 0.0)
-        st["dodge"] = 3.0 + st["agi"] / 20.0
-        st["block"] = 5.0 if self.has_shield() else 0.0
-        st["block_value"] = 5 + st["str"] // 4
-        old_max_hp, old_max_pw = self.max_hp, self.max_power
-        self.max_hp = int(20 + self.cls["hp_per_level"] * lvl + st["sta"] * 10)
-        if self.power_type == "mana":
-            self.max_power = int(40 + st["int"] * 15)
-        else:
-            self.max_power = 100
-        st["hp_regen"] = 0.6 + st["spi"] * 0.12
-        st["mp_regen"] = 2.0 + st["spi"] * 0.35
-        w = self.weapon()
-        bonus = st["ap"] / 14.0 * w["speed"]
-        st["dmg_min"] = int(w["min"] + bonus)
-        st["dmg_max"] = int(w["max"] + bonus)
-        st["speed"] = w["speed"]
-        self.stats = st
-        if full:
-            self.hp = self.max_hp
-            self.power = self.max_power if self.power_type == "mana" else 0
-        else:
-            if self.max_hp > old_max_hp and old_max_hp > 1:
-                self.hp = min(self.max_hp, self.hp + (self.max_hp - old_max_hp))
-            self.hp = min(self.hp, self.max_hp)
-            if self.power_type == "mana" and self.max_power > old_max_pw and old_max_pw > 0:
-                self.power = min(self.max_power, self.power + (self.max_power - old_max_pw))
-            self.power = min(self.power, self.max_power)
-        self.mark("hp", "pw")
+    def dual_wielding(self) -> bool:
+        it = self.item_def("off_hand")
+        return bool(it and it["type"] == "weapon")
 
-    def update_gear_look(self):
-        gear = {}
-        for slot in ("main_hand", "off_hand", "head", "shoulders", "back", "chest", "legs", "hands", "feet"):
-            item_id = self.equipment.get(slot)
-            if item_id:
-                gear[slot] = item_id
-        self.look["gear"] = gear
-        self.look["cls"] = self.class_id
-        self.mark("look")
+    def ranged(self) -> bool:
+        it = self.item_def("main_hand")
+        return bool(it and it.get("sub") in ("bogen",))
 
     def state_flags(self) -> int:
         f = super().state_flags()
         if self.sitting:
             f |= 4
+        if self.mounted:
+            f |= 64
         return f
 
     def spawn_info(self) -> dict:
         d = super().spawn_info()
         d["cls"] = self.class_id
+        d["guild"] = self.look.get("guild_name")
         return d
 
     # ------------------------------------------------------------------ Inventar
     def count_item(self, item_id: str) -> int:
-        return sum(s[1] for s in self.bags if s and s[0] == item_id)
-
-    def can_add(self, items: list[tuple[str, int]]) -> bool:
-        bags = [list(s) if s else None for s in self.bags]
-        return self._add_to(bags, items)
+        return sum(s["n"] for s in self.bags if s and s["i"] == item_id)
 
     @staticmethod
-    def _add_to(bags: list, items: list[tuple[str, int]]) -> bool:
-        for item_id, n in items:
-            stack = ITEMS[item_id].get("stack", 1)
-            for s in bags:
-                if n <= 0:
-                    break
-                if s and s[0] == item_id and s[1] < stack:
-                    add = min(n, stack - s[1])
-                    s[1] += add
-                    n -= add
+    def _add_to(bags: list, items: list[tuple], stacks: dict) -> bool:
+        for entry in items:
+            item_id, n = entry[0], entry[1]
+            bound = entry[2] if len(entry) > 2 else False
+            extra = entry[3] if len(entry) > 3 else None
+            stack = stacks.get(item_id, 1)
+            if stack > 1 and not extra:
+                for s in bags:
+                    if n <= 0:
+                        break
+                    if s and s["i"] == item_id and s["n"] < stack and bool(s.get("b")) == bool(bound):
+                        add = min(n, stack - s["n"])
+                        s["n"] += add
+                        n -= add
             for i in range(len(bags)):
                 if n <= 0:
                     break
                 if bags[i] is None:
                     add = min(n, stack)
-                    bags[i] = [item_id, add]
+                    inst = {"i": item_id, "n": add}
+                    if bound:
+                        inst["b"] = 1
+                    if extra:
+                        inst.update(extra)
+                    bags[i] = inst
                     n -= add
             if n > 0:
                 return False
         return True
 
-    def add_items(self, items: list[tuple[str, int]]) -> bool:
-        bags = [list(s) if s else None for s in self.bags]
-        if not self._add_to(bags, items):
+    def can_add(self, items: list[tuple]) -> bool:
+        from ..content.items import ITEMS
+        bags = [dict(s) if s else None for s in self.bags]
+        return self._add_to(bags, items, {i[0]: ITEMS[i[0]].get("stack", 1) for i in items})
+
+    def add_items(self, items: list[tuple]) -> bool:
+        """items: [(item_id, anzahl[, gebunden[, extra])]. Alles oder nichts."""
+        from ..content.items import ITEMS
+        bags = [dict(s) if s else None for s in self.bags]
+        if not self._add_to(bags, items, {i[0]: ITEMS[i[0]].get("stack", 1) for i in items}):
             return False
         self.bags = bags
+        self.save_dirty = True
         return True
 
     def remove_item(self, item_id: str, n: int) -> int:
@@ -390,37 +507,34 @@ class Player(Unit):
             s = self.bags[i]
             if n <= 0:
                 break
-            if s and s[0] == item_id:
-                take = min(n, s[1])
-                s[1] -= take
+            if s and s["i"] == item_id:
+                take = min(n, s["n"])
+                s["n"] -= take
                 n -= take
                 removed += take
-                if s[1] <= 0:
+                if s["n"] <= 0:
                     self.bags[i] = None
+        if removed:
+            self.save_dirty = True
         return removed
 
     def free_slots(self) -> int:
         return sum(1 for s in self.bags if s is None)
 
-    # ------------------------------------------------------------------ Speichern
-    def record_data(self) -> dict:
-        return {
-            "level": self.level, "xp": self.xp, "copper": self.copper,
-            "hp": self.hp if not self.dead else max(1, self.max_hp // 2),
-            "res": int(self.power) if self.power_type == "mana" else 0,
-            "inventory": [list(s) if s else None for s in self.bags],
-            "equipment": dict(self.equipment),
-            "quests": {"active": {k: list(v) for k, v in self.quests_active.items()}, "done": sorted(self.quests_done)},
-            "look": {k: v for k, v in self.look.items() if k not in ("gear", "cls")},
-            "played_seconds": self.played_seconds + int(now() - self.login_time),
-        }
+    def currency(self, key: str) -> int:
+        return int(self.currencies.get(key, 0))
+
+    def add_currency(self, key: str, n: int):
+        self.currencies[key] = max(0, self.currency(key) + n)
+        self.save_dirty = True
 
 
-# ============================================================================== Gegner
+# =============================================================================== Gegner
 class Mob(Unit):
     kind = "mob"
 
-    def __init__(self, tpl: dict, x: float, z: float, r: float = 0.0, lvl_range=None, spawn_r: float = 0.0):
+    def __init__(self, tpl: dict, x: float, z: float, r: float = 0.0, lvl_range=None, spawn_r: float = 0.0,
+                 difficulty: dict | None = None):
         lo, hi = lvl_range or tpl["lvl"]
         super().__init__(tpl["name"], random.randint(lo, hi), x, z, r)
         self.tpl = tpl
@@ -429,10 +543,14 @@ class Mob(Unit):
         self.model = tpl["model"]
         self.scale = tpl.get("scale", 1.0)
         self.radius = tpl.get("radius", 0.5)
-        self.hostile = not tpl.get("critter", False)
-        self.look = {"tint": tpl.get("tint"), "elite": tpl.get("elite", False), "rare": tpl.get("rare", False),
-                     "boss": tpl.get("boss", False), "aggro": tpl.get("aggro", False),
-                     "critter": tpl.get("critter", False), "dummy": tpl.get("dummy", False)}
+        self.hostile = not tpl.get("critter", False) and not tpl.get("friendly", False)
+        self.side = "mob"
+        self.look = dict(tpl.get("look", {}))
+        self.look.update({"elite": tpl.get("elite", False), "rare": tpl.get("rare", False), "boss": tpl.get("boss", False),
+                          "aggro": tpl.get("aggro", False), "critter": tpl.get("critter", False),
+                          "dummy": tpl.get("dummy", False)})
+        if tpl.get("tint"):
+            self.look["tint"] = tpl["tint"]
         self.home = (x, z, r)
         self.spawn_r = spawn_r
         self.state = "idle"
@@ -442,28 +560,39 @@ class Mob(Unit):
         self.ab_used: set[str] = set()
         self.wander_to = None
         self.next_wander = now() + random.uniform(2, 10)
-        self.tap: set[int] | None = None      # Spieler-IDs mit Beuterecht
-        self.tap_owner = None
+        self.tap: set[int] | None = None
         self.loot: dict[int, dict] = {}
         self.respawn_at = 0.0
         self.corpse_until = 0.0
-        self.hidden = False
         self.flee_until = 0.0
         self.fled = False
         self.taunt_by: int | None = None
         self.taunt_until = 0.0
         self.summons: list[int] = []
         self.owner_boss: int | None = None
-        self.last_hit_t = 0.0
         self.evade_t = 0.0
         self.engage_t = 0.0
+        self.phase = 0
+        self.difficulty = difficulty or {}
+        self.resist = dict(tpl.get("resist", {}))
+        self.fear_dir = None
+        self.spawn_group = None
         self.reset_stats()
 
     def reset_stats(self):
-        self.max_hp = mob_max_hp(self.tpl, self.level)
+        from ..content.mobs import mob_armor, mob_damage, mob_max_hp
+        d = self.difficulty
+        self.max_hp = int(mob_max_hp(self.tpl, self.level) * d.get("hp", 1.0))
         self.hp = self.max_hp
         self.armor = mob_armor(self.tpl, self.level)
-        self.dmg = mob_damage(self.tpl, self.level)
+        lo, hi = mob_damage(self.tpl, self.level)
+        m = d.get("dmg", 1.0)
+        self.dmg = (int(lo * m), int(hi * m))
+        rt = self.tpl.get("power")
+        if rt:
+            self.power_type = "mana"
+            self.max_power = 100 + self.level * 20
+            self.power = self.max_power
         self.mark("hp", "lvl")
 
     def state_flags(self) -> int:
@@ -477,16 +606,40 @@ class Mob(Unit):
     def spawn_info(self) -> dict:
         d = super().spawn_info()
         d["mob"] = self.tpl["id"]
+        d["fam"] = self.tpl.get("family")
         return d
 
 
-# ============================================================================== NPCs
+class Pet(Mob):
+    """Begleiter eines Spielers (Skelette, Naturgeist, Wolf)."""
+    kind = "pet"
+
+    def __init__(self, tpl: dict, owner: Player, x: float, z: float, expires: float = 0.0):
+        super().__init__(tpl, x, z, owner.r, (owner.level, owner.level))
+        self.owner_id = owner.id
+        self.owner_name = owner.name
+        self.hostile = False
+        self.side = "player"
+        self.title = f"Diener von {owner.name}" if tpl.get("undead") else f"Begleiter von {owner.name}"
+        self.expires = expires
+        self.state = "follow"
+        self.follow_angle = random.uniform(-1.5, 1.5)
+        self.pet_mult = 1.0
+        self.team = owner.team
+
+    def spawn_info(self) -> dict:
+        d = super().spawn_info()
+        d["owner"] = self.owner_id
+        return d
+
+
+# =============================================================================== NPCs
 class Npc(Unit):
     kind = "npc"
 
     def __init__(self, tpl: dict):
         x, z = tpl["pos"]
-        super().__init__(tpl["name"], tpl["lvl"], x, z, tpl["rot"])
+        super().__init__(tpl["name"], tpl.get("lvl", 10), x, z, tpl.get("rot", 0.0))
         self.tpl = tpl
         self.npc_id = tpl["id"]
         self.title = tpl.get("title", "")
@@ -495,40 +648,92 @@ class Npc(Unit):
         self.look = dict(tpl.get("look", {}))
         self.radius = 0.5
         self.hostile = False
+        self.side = "neutral"
         self.max_hp = self.hp = 100 + 40 * self.level
-        self.home = (x, z, tpl["rot"])
+        self.home = (x, z, tpl.get("rot", 0.0))
         self.wander_to = None
         self.next_wander = now() + random.uniform(3, 8)
         self.next_bark = now() + random.uniform(20, 60)
         self.talk_until = 0.0
+        self.path_i = 0
 
     def spawn_info(self) -> dict:
         d = super().spawn_info()
         d["npc"] = self.npc_id
-        d["vendor"] = bool(self.tpl.get("vendor"))
+        d["svc"] = self.tpl.get("services", [])
         d["guard"] = self.tpl.get("guard", False)
         return d
 
 
-# ============================================================================== Sammelobjekte
+# =============================================================================== Objekte
 class GameObj(Unit):
+    """Sammelobjekte (Kräuter, Erze), Truhen, Teleportationssteine, Questobjekte, Briefkästen, Werkbänke."""
     kind = "obj"
 
-    NAMES = {"herb": "Wiesenkraut", "ore": "Kupferader", "gackerle": "Gackerle"}
-
-    def __init__(self, spec: dict):
+    def __init__(self, spec: dict, name: str):
         x, z = spec["pos"]
-        super().__init__(self.NAMES.get(spec["kind"], spec["kind"]), 1, x, z, random.uniform(0, math.tau))
+        super().__init__(name, spec.get("lvl", 1), x, z, spec.get("r", random.uniform(0, math.tau)))
+        self.spec = spec
         self.obj_kind = spec["kind"]
-        self.item = spec["item"]
-        self.respawn = spec.get("respawn", 45)
-        self.model = spec["kind"]
+        self.item = spec.get("item")
+        self.respawn = spec.get("respawn", 60)
+        self.model = spec.get("model", spec["kind"])
         self.available = True
         self.respawn_at = 0.0
         self.max_hp = self.hp = 1
-        self.hidden = False
+        self.radius = spec.get("radius", 0.8)
+        self.look = dict(spec.get("look", {}))
 
     def spawn_info(self) -> dict:
         d = super().spawn_info()
         d["obj"] = self.obj_kind
+        d["sub"] = self.spec.get("sub") or self.spec.get("node")
         return d
+
+
+class Trap(Unit):
+    kind = "trap"
+
+    def __init__(self, owner: Player, spec: dict, x: float, z: float, t: float):
+        super().__init__(spec["name"], owner.level, x, z, 0.0)
+        self.owner_id = owner.id
+        self.spec = spec
+        self.expires = t + spec.get("dur", 60)
+        self.armed_at = t + 1.0
+        self.model = "trap_" + spec.get("fx", "frost")
+        self.side = "player"
+        self.max_hp = self.hp = 1
+        self.radius = spec.get("radius", 2.5)
+        self.team = owner.team
+
+    def spawn_info(self) -> dict:
+        d = super().spawn_info()
+        d["owner"] = self.owner_id
+        d["fx"] = self.spec.get("fx")
+        return d
+
+
+class GroundEffect(Unit):
+    """Bodeneffekt (Seuchenwolke, Feuerflächen von Bossen, Lava)."""
+    kind = "ground"
+
+    def __init__(self, src: Unit, spec: dict, x: float, z: float, t: float, friendly_to: str):
+        super().__init__(spec.get("name", "Bodeneffekt"), src.level, x, z, 0.0)
+        self.src_id = src.id
+        self.spec = spec
+        self.expires = t + spec.get("dur", 10) if spec.get("dur", 10) > 0 else 0.0
+        self.next_tick = t + spec.get("delay", 0.5)
+        self.radius = spec.get("radius", 6)
+        self.model = "ground_" + spec.get("fx", "fire")
+        self.side = friendly_to
+        self.max_hp = self.hp = 1
+
+    def spawn_info(self) -> dict:
+        d = super().spawn_info()
+        d["fx"] = self.spec.get("fx")
+        d["r2"] = self.radius
+        return d
+
+
+def resource_max(rtype: str) -> int | None:
+    return RESOURCES.get(rtype, {}).get("max")
