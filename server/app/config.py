@@ -12,6 +12,8 @@ def _normalize_db_url(url: str) -> str:
 
 
 DATABASE_URL = _normalize_db_url(os.environ.get("DATABASE_URL", "sqlite:///./eldornia.db"))
+# Eigenes Postgres-Schema, damit sich Eldornia eine Datenbank mit anderen Projekten teilen kann
+DB_SCHEMA = os.environ.get("DB_SCHEMA", "eldornia" if DATABASE_URL.startswith("postgresql") else "")
 SECRET_KEY = os.environ.get("SECRET_KEY", "eldornia-dev-secret-bitte-aendern")
 TOKEN_HOURS = int(os.environ.get("TOKEN_HOURS", "24"))
 

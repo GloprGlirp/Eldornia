@@ -1,3 +1,7 @@
+# Render-Blueprint für den Eldornia-Server.
+# Kostenlose Render-Konten haben nur EINE Gratis-Datenbank. Eldornia nutzt deshalb eine vorhandene
+# PostgreSQL-Datenbank mit (eigenes Schema "eldornia", kollidiert nicht mit anderen Projekten):
+# Beim Anlegen nach DATABASE_URL gefragt → "Internal Database URL" der bestehenden Datenbank einfügen.
 services:
   - type: web
     name: eldornia
@@ -12,10 +16,6 @@ services:
       - key: SECRET_KEY
         generateValue: true
       - key: DATABASE_URL
-        fromDatabase:
-          name: eldornia-db
-          property: connectionString
-
-databases:
-  - name: eldornia-db
-    plan: free
+        sync: false
+      - key: DB_SCHEMA
+        value: eldornia
