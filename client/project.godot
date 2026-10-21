@@ -57,3 +57,4 @@ lights_and_shadows/positional_shadow/soft_shadow_filter_quality=2
 environment/defaults/default_clear_color=Color(0.055, 0.043, 0.035, 1)
 textures/default_filters/anisotropic_filtering_level=3
 shading/overrides/force_lambert_over_burley=false
+textures/vram_compression/import_etc2_astc=true
