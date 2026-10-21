@@ -42,6 +42,7 @@ func _init(p_size := Vector2(220, 300)) -> void:
 	rim.light_color = Color(0.6, 0.75, 1.0)
 	vp.add_child(rim)
 	pivot = Node3D.new()
+	pivot.rotation.y = PI      # Modelle schauen nach -z, die Kamera steht bei +z
 	vp.add_child(pivot)
 	cam = Camera3D.new()
 	cam.fov = 30

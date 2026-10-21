@@ -79,6 +79,13 @@ func build() -> void:
 	arms.clear()
 	neck_segs.clear()
 	tail_segs.clear()
+	var alias := {"wolf_mount": "worg", "moth": "bird", "gryphon": "bird", "lizard": "drake", "yeti": "bear", "salamander": "drake"}
+	if alias.has(species):
+		if species == "wolf_mount":
+			scale = Vector3.ONE * 1.35
+		elif species == "gryphon":
+			scale = Vector3.ONE * 2.2
+		species = alias[species]
 	match species:
 		"wolf", "hellhound", "worg", "fox":
 			_quadruped({"len": 1.15, "h": 0.78, "leg_r": 0.07, "head": 0.24, "snout": 0.3, "ears": "pointy", "tail": "bushy",
